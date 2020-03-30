@@ -1,0 +1,17 @@
+{
+  "plaid": {
+    "clientId": "abc",
+    "secret": "abc",
+    "publicKey": "abc",
+    "env": "development",
+    "institutionTokens": {
+      "Bank Of America": "access-development-abc"
+    }
+  },
+  "db": {
+    "host": "localhost",
+    "user": "root",
+    "password": "",
+    "database": "finances"
+  }
+}
