@@ -8,11 +8,11 @@
   "author": "nojvek@gmail.com",
   "repository": "https://github.com/nojvek/plaid-mysql-sync",
   "license": "MIT",
-  "dependencies": {
-    "moment": "2.22.x",
-    "plaid": "4.x.x"
-  },
   "devDependencies": {
+    "@types/mysql2": "types/mysql2",
+    "moment": "2.22.x",
+    "mysql2": "2.1.0",
+    "plaid": "4.x.x",
     "prettier": "2.0.2",
     "ts-node": "8.8.1",
     "typescript": "3.8.3"

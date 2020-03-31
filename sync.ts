@@ -1,5 +1,6 @@
 import fs from 'fs';
 import plaid from 'plaid';
+import mysql2 from 'mysql2';
 import moment from 'moment';
 
 // trying to land this as part of proper typescript
@@ -26,9 +27,11 @@ interface SyncConfig {
   db: DbConfig;
 }
 
+// load config. TODO: validate config
 const {plaid: plaidConf, db: dbConf}: SyncConfig = JSON.parse(fs.readFileSync(`./config.json`, `utf-8`));
 
-const plaidApi = new plaid.Client(
+const dbClient = mysql2.createPool(dbConf).promise();
+const plaidClient = new plaid.Client(
   plaidConf.clientId,
   plaidConf.secret,
   plaidConf.publicKey,
@@ -36,7 +39,7 @@ const plaidApi = new plaid.Client(
   {version: '2019-05-29'},
 );
 
-function arrayToSql(tableName: string, rows: any[]): string {
+function arrayAsInsertSql(tableName: string, rows: any[]): string {
   if (rows.length < 1) {
     return ``;
   }
@@ -53,17 +56,29 @@ function arrayToSql(tableName: string, rows: any[]): string {
     .filter((col) => col !== `id`)
     .map((col) => `${esc(col)}=VALUES(${esc(col)})`)
     .join(`, `);
-  sqlParts.push(`ON DUPLICATE KEY UPDATE ${valueUpdates}`);
+  sqlParts.push(`ON DUPLICATE KEY UPDATE ${valueUpdates}`); // upsert if primary key already exists
   sqlParts.push(`;`);
   return sqlParts.join(`\n`);
 }
 
-function writeTable(tableName: string, rows: any[]) {
-  fs.writeFileSync(`tables/${tableName}.sql`, arrayToSql(tableName, rows));
+async function updateTable(tableName: string, rows: any[]) {
+  const sql = arrayAsInsertSql(tableName, rows);
+  if (!sql) return; // nothing to execute
+
+  const sqlPreview = sql.length > 100 ? `${sql.substr(0, 97).replace(/\n/g, ` `)}...` : sql;
+  console.log(`Executing ${sqlPreview}`);
+
+  // run query
+  const [queryResult] = await dbClient.execute(sql);
+  console.log((queryResult as any).info);
+
+  // write to filesystem so we have some form of a log
+  fs.writeFileSync(`tables/${tableName}.sql`, sql);
 }
 
-async function syncCategories() {
-  const {categories} = await plaidApi.getCategories();
+async function fetchCategories() {
+  console.log(`fetching categories`);
+  const {categories} = await plaidClient.getCategories();
   const categoryRows = categories.map(({category_id, group, hierarchy}) => ({
     id: category_id,
     group,
@@ -71,14 +86,14 @@ async function syncCategories() {
     category1: hierarchy[1],
     category2: hierarchy[2],
   }));
-
-  writeTable(`categories`, categoryRows);
+  return categoryRows;
 }
 
 async function syncAccounts(institutionTokens: Obj<string>, historyMonths = 1) {
   const accountRows = [];
   const institutionRows = [];
   const transactionRows = [];
+  const categoryRows = await fetchCategories();
 
   // refreshing transactions is not available in dev env :(
   // const accessTokens = Object.values(institutionTokens);
@@ -86,10 +101,10 @@ async function syncAccounts(institutionTokens: Obj<string>, historyMonths = 1) {
   // await Promise.all(accessTokens.map((accessToken) => plaidClient.refreshTransactions(accessToken)));
 
   for (const [institutionName, accessToken] of Object.entries(institutionTokens)) {
-    console.log(`downloading data for`, institutionName, accessToken);
+    console.log(`fetching transactions for`, institutionName, accessToken);
 
     // accounts //
-    const {accounts, item: institution} = await plaidApi.getAccounts(accessToken);
+    const {accounts, item: institution} = await plaidClient.getAccounts(accessToken);
     institutionRows.push({
       id: institution.institution_id,
       name: institutionName,
@@ -115,7 +130,7 @@ async function syncAccounts(institutionTokens: Obj<string>, historyMonths = 1) {
     // transactions //
     const startDate = moment().subtract(historyMonths, 'months').format('YYYY-MM-DD');
     const endDate = moment().format('YYYY-MM-DD');
-    const {transactions} = await plaidApi.getAllTransactions(accessToken, startDate, endDate);
+    const {transactions} = await plaidClient.getAllTransactions(accessToken, startDate, endDate);
 
     for (const tr of transactions) {
       if (tr.pending) {
@@ -143,17 +158,23 @@ async function syncAccounts(institutionTokens: Obj<string>, historyMonths = 1) {
         location_city: tr.location.city,
         location_state: tr.location.region,
         location_country: tr.location.country,
-        payment_channel: (tr as any).payment_channel, // plaid types not upto date, made a PR
+        // plaid types not upto date, see https://github.com/plaid/plaid-node/pull/266
+        payment_channel: (tr as any).payment_channel,
       });
     }
   }
 
-  writeTable(`accounts`, accountRows);
-  writeTable(`institutions`, institutionRows);
-  writeTable(`transactions`, transactionRows);
+  await updateTable(`categories`, categoryRows);
+  await updateTable(`institutions`, institutionRows);
+  await updateTable(`accounts`, accountRows);
+  await updateTable(`transactions`, transactionRows);
 }
 
 ///// main /////
-
-syncCategories().catch((err) => console.error(err));
-syncAccounts(plaidConf.institutionTokens, 5 * 12).catch((err) => console.error(err));
+const historyMonths = 1; // sync one month back
+syncAccounts(plaidConf.institutionTokens, historyMonths)
+  .then(() => process.exit(0)) // we need manual process.exit because mysql holds pool
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
