@@ -5,7 +5,7 @@ import moment from 'moment';
 
 // trying to land this as part of proper typescript
 // see https://github.com/microsoft/TypeScript/issues/37695
-type Obj<T> = {[key: string]: T};
+type Obj<T> = Record<string, T>;
 
 export interface PlaidConfig {
   clientId: string;
