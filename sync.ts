@@ -104,27 +104,32 @@ async function syncAccounts(institutionTokens: Obj<string>, historyMonths = 1) {
     console.log(`fetching transactions for`, institutionName, accessToken);
 
     // accounts //
-    const {accounts, item: institution} = await plaidClient.getAccounts(accessToken);
-    institutionRows.push({
-      id: institution.institution_id,
-      name: institutionName,
-    });
-
-    for (const account of accounts) {
-      let curBalance = account.balances.current;
-      if (account.type === `credit` || account.type === `loan`) {
-        curBalance *= -1;
-      }
-
-      accountRows.push({
-        id: account.account_id,
-        institution_id: institution.institution_id,
-        balance_current: curBalance,
-        mask: account.mask,
-        name: account.official_name || account.name,
-        type: account.type,
-        subtype: account.subtype,
+    try {
+      const {accounts, item: institution} = await plaidClient.getAccounts(accessToken);
+      institutionRows.push({
+        id: institution.institution_id,
+        name: institutionName,
       });
+
+      for (const account of accounts) {
+        let curBalance = account.balances.current;
+        if (account.type === `credit` || account.type === `loan`) {
+          curBalance *= -1;
+        }
+
+        accountRows.push({
+          id: account.account_id,
+          institution_id: institution.institution_id,
+          balance_current: curBalance,
+          mask: account.mask,
+          name: account.official_name || account.name,
+          type: account.type,
+          subtype: account.subtype,
+        });
+      }
+    } catch (err) {
+      console.error(institutionName, err);
+      continue;
     }
 
     // transactions //
